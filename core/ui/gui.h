@@ -66,6 +66,7 @@ enum class GuiState {
 	NetworkStart,
 	Cheats,
 	Achievements,
+	Debugger,
 };
 extern GuiState gui_state;
 

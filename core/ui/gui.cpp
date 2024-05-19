@@ -52,6 +52,7 @@
 #include "oslib/storage.h"
 #include <stb_image_write.h>
 #include "hw/pvr/Renderer_if.h"
+#include "gui_debugger.h"
 #if defined(USE_SDL)
 #include "sdl/sdl.h"
 #endif
@@ -102,6 +103,7 @@ static std::recursive_mutex guiMutex;
 using LockGuard = std::lock_guard<std::recursive_mutex>;
 
 ImFont *largeFont;
+ImFont *monospaceFont;
 static Toast toast;
 static ThreadRunner uiThreadRunner;
 
@@ -148,6 +150,7 @@ void gui_init()
     EventManager::listen(Event::Start, emuEventCallback);
 	EventManager::listen(Event::Terminate, emuEventCallback);
     ggpo::receiveChatMessages([](int playerNum, const std::string& msg) { chat.receive(playerNum, msg); });
+	gui_debugger_init();
 }
 
 static ImGuiKey keycodeToImGuiKey(u8 keycode)
@@ -327,6 +330,8 @@ void gui_initFonts()
 	verify(data != nullptr);
 	const float largeFontSize = uiScaled(21.f);
 	largeFont = io.Fonts->AddFontFromMemoryTTF(data.release(), dataSize, largeFontSize, nullptr, ranges);
+	// Monospace font for debugger
+	monospaceFont = io.Fonts->AddFontDefault();
 
     NOTICE_LOG(RENDERER, "Screen DPI is %.0f, size %d x %d. Scaling by %.2f", settings.display.dpi, settings.display.width, settings.display.height, settings.display.uiScale);
 }
@@ -511,7 +516,7 @@ void gui_plot_render_time(int width, int height)
 void gui_open_settings()
 {
 	const LockGuard lock(guiMutex);
-	if (gui_state == GuiState::Closed && !settings.naomi.slave)
+	if (!settings.naomi.slave && (gui_state == GuiState::Closed || gui_state == GuiState::Debugger))
 	{
 		if (!ggpo::active())
 		{
@@ -710,6 +715,11 @@ static void gui_display_commands()
 			if (ImGui::Button(ICON_FA_TROPHY "  Achievements", ScaledVec2(buttonWidth, 50)) && achievements::isActive())
 				gui_setState(GuiState::Achievements);
 		}
+		// // Debugger
+		// if (config::DebuggerEnabled) {
+		// 	if (ImGui::Button("Debugger", ScaledVec2(buttonWidth, 50)))
+		// 		gui_setState(GuiState::Debugger);
+		// }
 		// Barcode
 		if (card_reader::barcodeAvailable())
 		{
@@ -1575,6 +1585,11 @@ static void contentpath_warning_popup()
 
 static void gui_debug_tab()
 {
+	header("Debugging");
+	{
+		OptionCheckbox("Enable debugger", config::DebuggerEnabled,
+					"Enable bult-in Debugger (access via \"Debugger\" option in menu).");
+	}
 	header("Logging");
 	{
 		LogManager *logManager = LogManager::GetInstance();
@@ -3471,6 +3486,9 @@ void gui_display_ui()
 		achievements::achievementList();
 		break;
 #endif
+	case GuiState::Debugger:
+		gui_debugger();
+		break;
 	default:
 		die("Unknown UI state");
 		break;
@@ -3547,7 +3565,10 @@ void gui_draw_osd()
 	}
 	if (!settings.raHardcoreMode)
 		lua::overlay();
-    ImGui::Render();
+	if (config::DebuggerEnabled)
+		gui_debugger();
+
+	ImGui::Render();
 	uiThreadRunner.execTasks();
 }
 
@@ -3609,6 +3630,7 @@ void gui_term()
 	{
 		inited = false;
 		scanner.stop();
+		gui_debugger_term();
 		ImGui::DestroyContext();
 	    EventManager::unlisten(Event::Resume, emuEventCallback);
 	    EventManager::unlisten(Event::Start, emuEventCallback);
